@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		563058F62FC1009800988BCB /* EPUBKit in Frameworks */ = {isa = PBXBuildFile; productRef = 563058F52FC1009800988BCB /* EPUBKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		5638E1112FC0CCAD00E3E59B /* KhaidukovPA_Kursash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KhaidukovPA_Kursash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -24,6 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				563058F62FC1009800988BCB /* EPUBKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,6 +71,7 @@
 			);
 			name = KhaidukovPA_Kursash;
 			packageProductDependencies = (
+				563058F52FC1009800988BCB /* EPUBKit */,
 			);
 			productName = KhaidukovPA_Kursash;
 			productReference = 5638E1112FC0CCAD00E3E59B /* KhaidukovPA_Kursash.app */;
@@ -95,6 +101,9 @@
 			);
 			mainGroup = 5638E1082FC0CCAD00E3E59B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				563058F42FC1009800988BCB /* XCRemoteSwiftPackageReference "EPUBKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5638E1122FC0CCAD00E3E59B /* Products */;
 			projectDirPath = "";
@@ -254,6 +263,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "KhaidukovPA-Kursash-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -285,6 +295,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "KhaidukovPA-Kursash-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -329,6 +340,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		563058F42FC1009800988BCB /* XCRemoteSwiftPackageReference "EPUBKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/witekbobrowski/EPUBKit";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		563058F52FC1009800988BCB /* EPUBKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 563058F42FC1009800988BCB /* XCRemoteSwiftPackageReference "EPUBKit" */;
+			productName = EPUBKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5638E1092FC0CCAD00E3E59B /* Project object */;
 }

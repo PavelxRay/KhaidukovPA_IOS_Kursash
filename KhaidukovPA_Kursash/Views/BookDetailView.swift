@@ -4,25 +4,19 @@
 //
 //  Created by user271126 on 5/22/26.
 //
-
 import SwiftUI
 
 struct BookDetailView: View {
     let book: Book
     
-    // Состояния для отслеживания загрузки файла
     @State private var isDownloaded = false
     @State private var isDownloading = false
     @State private var errorMessage: String? = nil
-    
-    // Состояние для перехода на экран чтения
-    @State private var parsedChapters: [BookChapter] = []
     @State private var isReadyToRead = false
     
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                // Красивая обложка
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 110))
                     .foregroundColor(.blue)
@@ -44,7 +38,6 @@ struct BookDetailView: View {
                 Divider()
                     .padding(.horizontal)
                 
-                // Вывод ошибки скачивания, если она возникнет
                 if let error = errorMessage {
                     Text(error)
                         .font(.caption)
@@ -53,11 +46,9 @@ struct BookDetailView: View {
                         .padding(.horizontal)
                 }
                 
-                // Динамическая кнопка Скачать / Читать
                 if isDownloaded {
-                    // Кнопка открытия Читалки
                     Button(action: {
-                        openBook()
+                        isReadyToRead = true
                     }) {
                         HStack {
                             Image(systemName: "book.fill")
@@ -72,7 +63,6 @@ struct BookDetailView: View {
                     }
                     .padding(.horizontal, 30)
                 } else {
-                    // Кнопка Скачивания
                     Button(action: {
                         Task { await downloadBook() }
                     }) {
@@ -98,9 +88,9 @@ struct BookDetailView: View {
                     .padding(.horizontal, 30)
                 }
                 
-                // Скрытая навигация для программного перехода в ридер после парсинга
+                // Передаем точный URL-путь к файлу в нашей папке Documents
                 NavigationLink(
-                    destination: ReaderView(bookTitle: book.title, chapters: parsedChapters),
+                    destination: ReaderView(bookTitle: book.title, fileURL: StorageManager.shared.getLocalFileURL(for: book.id)),
                     isActive: $isReadyToRead
                 ) {
                     EmptyView()
@@ -112,14 +102,18 @@ struct BookDetailView: View {
         .navigationTitle("О книге")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            // При открытии экрана проверяем, скачана ли уже эта книга
             isDownloaded = StorageManager.shared.isBookDownloaded(bookId: book.id)
         }
     }
     
-    // Логика асинхронного скачивания файла
     private func downloadBook() async {
-        guard let urlString = book.epubURLString else { return }
+        guard var urlString = book.epubURLString else { return }
+        
+        // Хитрый трюк: если ссылка начинается с http://, меняем её на защищённую https://
+        if urlString.hasPrefix("http://") {
+            urlString = urlString.replacingOccurrences(of: "http://", with: "https://")
+        }
+        
         isDownloading = true
         errorMessage = nil
         
@@ -127,20 +121,9 @@ struct BookDetailView: View {
             _ = try await StorageManager.shared.downloadBook(bookId: book.id, urlString: urlString)
             isDownloaded = true
         } catch {
-            errorMessage = "Не удалось скачать книгу. Попробуйте позже."
+            errorMessage = "Не удалось скачать книгу. Ошибка: \(error.localizedDescription)"
         }
         isDownloading = false
     }
-    
-    // Логика чтения и парсинга перед открытием экрана
-    private func openBook() {
-        let fileURL = StorageManager.shared.getLocalFileURL(for: book.id)
-        // Запускаем твой алгоритм разбора ePub структуры
-        let chapters = EpubParser.shared.parseEpub(at: fileURL)
-        
-        if !chapters.isEmpty {
-            self.parsedChapters = chapters
-            self.isReadyToRead = true
-        }
-    }
+
 }

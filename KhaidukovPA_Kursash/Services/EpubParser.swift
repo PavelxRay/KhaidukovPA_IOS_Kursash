@@ -6,77 +6,112 @@
 //
 
 import Foundation
+import EPUBKit // Импортируем нашу библиотеку
 
-struct BookChapter: Identifiable {
+struct EpubChapter: Identifiable {
     let id = UUID()
     let title: String
-    let text: String
+    let content: String // Храним готовый чистый текст вместо капризных файлов URL
 }
 
 class EpubParser {
     static let shared = EpubParser()
     private init() {}
     
-    // Парсинг файла. Так как полноценный ePub-парсер требует много кода,
-    // мы делаем "умное чтение" для демонстрации в курсовой работе:
-    // Мы читаем текстовые данные файла и очищаем их от HTML разметки, как в твоем C# коде.
-    func parseEpub(at url: URL) -> [BookChapter] {
-        var chapters: [BookChapter] = []
+    func parseEpubFile(at url: URL) -> [EpubChapter] {
+        var parsedChapters: [EpubChapter] = []
         
-        do {
-            let fileData = try Data(contentsOf: url)
-            // Извлекаем текстовые строки из бинарного ePub (ZIP) файла
-            if let rawText = String(data: fileData, encoding: .ascii) {
-                
-                // Находим все текстовые блоки между базовыми XML/HTML тегами
-                let pattern = "<p.*?>(.*?)</p>|<title>(.*?)</title>"
-                let regex = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
-                let nsString = rawText as NSString
-                let results = regex.matches(in: rawText, options: [], range: NSRange(location: 0, length: nsString.length))
-                
-                var fullText = ""
-                for result in results {
-                    for i in 1..<result.numberOfRanges {
-                        let range = result.range(at: i)
-                        if range.location != NSNotFound {
-                            let matchText = nsString.substring(with: range)
-                            // Очищаем от остаточных HTML-тегов внутри абзаца
-                            let cleanParagraph = matchText.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                            if cleanParagraph.count > 5 {
-                                fullText += cleanParagraph + "\n\n"
-                            }
-                        }
-                    }
-                }
-                
-                // Если текст успешно извлечен, бьем его на условные главы по объемам текста
-                if fullText.count > 100 {
-                    let words = fullText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-                    let wordsPerChapter = 500
-                    var currentChapterIndex = 1
-                    
-                    for i in stride(from: 0, to: words.count, by: wordsPerChapter) {
-                        let end = min(i + wordsPerChapter, words.count)
-                        let chapterWords = words[i..<end]
-                        let chapterContent = chapterWords.joined(separator: " ")
-                        
-                        chapters.append(BookChapter(
-                            title: "Глава \(currentChapterIndex)",
-                            text: chapterContent
-                        ))
-                        currentChapterIndex += 1
+        // Инициализируем документ библиотеки
+        guard let document = EPUBDocument(url: url) else {
+            print("Ошибка: Не удалось прочитать ePub структуру документа.")
+            return []
+        }
+        
+        // 1. Запускаем рекурсивный обход оглавления по правильному свойству .subTable
+        if let rootTocItems = document.tableOfContents.subTable {
+            extractChaptersRecursively(from: rootTocItems, document: document, result: &parsedChapters)
+        }
+        
+        // 2. Страховочный линейный вариант (Spine), если оглавление не дало результатов
+        if parsedChapters.isEmpty {
+            var index = 1
+            for spineItem in document.spine.items {
+                if let manifestItem = document.manifest.items[spineItem.idref] {
+                    let chapterURL = document.contentDirectory.appendingPathComponent(manifestItem.path)
+                    if let rawHtml = try? String(contentsOf: chapterURL, encoding: .utf8) {
+                        let cleanText = cleanHTML(rawHtml, chapterTitle: "Глава \(index)")
+                        parsedChapters.append(EpubChapter(title: "Глава \(index)", content: cleanText))
+                        index += 1
                     }
                 }
             }
-        } catch {
-            print("Ошибка чтения файла: \(error)")
         }
         
-        // Заглушка безопасности: если файл зашифрован или поврежден DRM, даем базовый текст
-        if chapters.isEmpty {
-            chapters.append(BookChapter(title: "Начало", text: "Файл успешно импортирован локально в хранилище устройства.\n\nСистемный ридер готов к обработке текстового слоя. Для детального рендеринга сложных стилей в курсовой работе используется нативный контейнер данных."))
-        }
-        
-        return chapters
+        return parsedChapters
     }
+    
+    // ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ РЕКУРСИЯ под типы данных EPUBKit
+    private func extractChaptersRecursively(from items: [EPUBTableOfContents], document: EPUBDocument, result: inout [EpubChapter]) {
+        for item in items {
+            if let path = item.item {
+                let chapterURL = document.contentDirectory.appendingPathComponent(path)
+                
+                if let rawHtml = try? String(contentsOf: chapterURL, encoding: .utf8) {
+                    // Передаем заголовок главы (item.label) для очистки дубликатов из текста
+                    let cleanText = cleanHTML(rawHtml, chapterTitle: item.label)
+                    
+                    // 1. ИГНОРИРУЕМ ТЕХНИЧЕСКИЙ МУСОР: Если в тексте содержатся маркеры лицензии Гутенберга,
+                    // или текст слишком короткий/вводный — не добавляем эту главу в ридер
+                    let isTrash = cleanText.contains("Project Gutenberg") && (cleanText.contains("License") || cleanText.contains("EBook"))
+                    let isShortIntro = cleanText.count < 150 && (item.label.lowercased().contains("title") || item.label.lowercased().contains("cover"))
+                    
+                    if !cleanText.isEmpty && !isTrash && !isShortIntro && !result.contains(where: { $0.title == item.label }) {
+                        result.append(EpubChapter(title: item.label, content: cleanText))
+                    }
+                }
+            }
+            
+            if let subChapters = item.subTable, !subChapters.isEmpty {
+                extractChaptersRecursively(from: subChapters, document: document, result: &result)
+            }
+        }
+    }
+    
+    private func cleanHTML(_ html: String, chapterTitle: String) -> String {
+        var clean = html.replacingOccurrences(of: "<style>[\\s\\S]*?</style>", with: "", options: .regularExpression)
+        clean = clean.replacingOccurrences(of: "<script>[\\s\\S]*?</script>", with: "", options: .regularExpression)
+        
+        clean = clean.replacingOccurrences(of: "</p>", with: "\n\n")
+        clean = clean.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression)
+        clean = clean.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        
+        clean = clean.replacingOccurrences(of: "&nbsp;", with: " ")
+        clean = clean.replacingOccurrences(of: "&amp;", with: "&")
+        clean = clean.replacingOccurrences(of: "&quot;", with: "\"")
+        clean = clean.replacingOccurrences(of: "&#39;", with: "'")
+        
+        var lines = clean.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        
+        // 2. УДАЛЯЕМ ДУБЛИКА ТЕКСТА: Если первые строчки главы дублируют её название (например, "CHAPTER I")
+        // или название книги ("Adventures of Huckleberry Finn"), мы их просто отрезаем
+        while !lines.isEmpty {
+            let firstLine = lines[0].lowercased()
+            let titleLower = chapterTitle.lowercased()
+            
+            if firstLine == titleLower ||
+               firstLine.contains("project gutenberg") ||
+               firstLine.contains("adventures of") ||
+               titleLower.contains(firstLine) ||
+               firstLine.hasPrefix("chapter") && firstLine.count < 15 {
+                lines.removeFirst() // Удаляем дублирующую строчку сверху
+            } else {
+                break // Как только пошел реальный текст — останавливаем чистку
+            }
+        }
+        
+        return lines.joined(separator: "\n\n")
+    }
+
 }
