@@ -3,83 +3,72 @@ import SwiftUI
 struct ReaderView: View {
     let bookTitle: String
     let fileURL: URL
-    let bookId: Int // Передаем ID для сохранения прогресса
+    let bookId: Int
     
     @State private var chapters: [EpubChapter] = []
     @State private var currentPageIndex: Int = 0
-    @State private var isBookFinished = false // Флаг для pop-up
+    @State private var isBookFinished = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             if chapters.isEmpty {
-                ProgressView("Загрузка страниц...")
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Загрузка страниц")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             } else {
-                // Заголовок текущей главы на основе нашего парсера
+                // Верхний строгий индикатор текущей главы
                 Text(chapters[currentPageIndex].title)
                     .font(.caption)
+                    .fontWeight(.medium)
                     .foregroundColor(.secondary)
-                    .padding(.top, 4)
+                    .padding(.vertical, 8)
+                    .lineLimit(1)
                 
-                // Отображение текста текущей страницы
-                ScrollView {
-                    Text(chapters[currentPageIndex].content)
-                        .font(.body)
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                
-                // Нижняя панель навигации
-                HStack {
-                    Button(action: {
-                        if currentPageIndex > 0 {
-                            currentPageIndex -= 1
-                            StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
+                // СОВРЕМЕННЫЙ ДИЗАЙН: Листание страниц свайпами, как в Apple Books
+                TabView(selection: $currentPageIndex) {
+                    ForEach(0..<chapters.count, id: \.self) { index in
+                        ScrollView {
+                            Text(chapters[index].content)
+                                .font(.body)
+                                .lineSpacing(6)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    }) {
-                        HStack {
-                            Image(systemName: "chevron.left")
-                            Text("Назад")
-                        }
-                    }
-                    .disabled(currentPageIndex == 0)
-                    
-                    Spacer()
-                    
-                    // Информативная подпись
-                    Text("Страница \(currentPageIndex + 1) из \(chapters.count)")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        if currentPageIndex < chapters.count - 1 {
-                            currentPageIndex += 1
-                            StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
-                        } else {
-                            // Если пользователь нажал "Вперед" на самой последней странице
-                            isBookFinished = true
-                        }
-                    }) {
-                        HStack {
-                            Text(currentPageIndex == chapters.count - 1 ? "Завершить" : "Вперед")
-                            Image(systemName: "chevron.right")
-                        }
+                        .tag(index)
                     }
                 }
-                .padding()
+                .tabViewStyle(.page(indexDisplayMode: .never)) // Отключаем стандартные точки внизу
+                .onChange(of: currentPageIndex) { oldValue, newIndex in // <-- Добавили oldValue
+                                    StorageManager.shared.saveProgress(bookId: bookId, currentPage: newIndex)
+                                    if newIndex == chapters.count - 1 {
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                            isBookFinished = true
+                                        }
+                                    }
+                                }
+                
+                Divider()
+                
+                // Нижний строгий системный счетчик страниц
+                Text("Страница \(currentPageIndex + 1) из \(chapters.count)")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 12)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemBackground))
         .onAppear {
-            // Асинхронно парсим книгу
-            DispatchQueue.global(qos: .userInitiated).async {
+            // Современный фоновый контекст Task вместо DispatchQueue
+            Task(priority: .userInitiated) {
                 let parsed = EpubParser.shared.parseEpubFile(at: fileURL)
-                DispatchQueue.main.async {
+                await MainActor.run {
                     self.chapters = parsed
-                    
-                    // ДОБАВЛЯЕМ ЭТУ СТРОКУ: сохраняем точное число получившихся страниц книги
                     UserDefaults.standard.set(parsed.count, forKey: "book_total_pages_\(bookId)")
                     
                     let savedPage = StorageManager.shared.getProgress(bookId: bookId)
@@ -89,17 +78,14 @@ struct ReaderView: View {
                 }
             }
         }
-        // Всплывающее окно (Pop-up) об успешном прочтении
-        .alert(isPresented: $isBookFinished) {
-            Alert(
-                title: Text("Поздравляем! 🎉"),
-                message: Text("Книга «\(bookTitle)» успешно прочтена!"),
-                dismissButton: .default(Text("Отлично"), action: {
-                    // Сбрасываем прогресс в 0 (или оставляем на последней странице по ТЗ)
-                    StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
-                    dismiss() // Закрываем ридер и возвращаемся в библиотеку
-                })
-            )
+        // СОВРЕМЕННЫЙ ПОП-АП: Без использования устаревшего конструктора Alert
+        .alert("Книга прочитана", isPresented: $isBookFinished) {
+            Button("Отлично", role: .cancel) {
+                StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
+                dismiss()
+            }
+        } message: {
+            Text("Вы успешно завершили чтение произведения: \(bookTitle).")
         }
     }
 }
