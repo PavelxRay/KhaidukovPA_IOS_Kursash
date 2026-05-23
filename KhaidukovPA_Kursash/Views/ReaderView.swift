@@ -3,87 +3,103 @@ import SwiftUI
 struct ReaderView: View {
     let bookTitle: String
     let fileURL: URL
+    let bookId: Int // Передаем ID для сохранения прогресса
     
     @State private var chapters: [EpubChapter] = []
-    @State private var currentChapterIndex = 0
-    @State private var isLoading = true
+    @State private var currentPageIndex: Int = 0
+    @State private var isBookFinished = false // Флаг для pop-up
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         VStack {
-            if isLoading {
-                VStack(spacing: 12) {
-                    ProgressView().scaleEffect(1.5)
-                    Text("Импорт и декомпиляция глав EPUB...")
-                        .foregroundColor(.secondary)
-                }
-            } else if chapters.isEmpty {
-                Text("Не удалось извлечь текстовые главы.")
-                    .foregroundColor(.red)
-                    .padding()
+            if chapters.isEmpty {
+                ProgressView("Загрузка страниц...")
             } else {
-                // Идеально плавный свиток текста текущей главы
+                // Заголовок текущей главы на основе нашего парсера
+                Text(chapters[currentPageIndex].title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
+                
+                // Отображение текста текущей страницы
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(chapters[currentChapterIndex].title)
-                            .font(.title)
-                            .bold()
-                            .padding(.bottom, 10)
-                        
-                        Text(chapters[currentChapterIndex].content)
-                            .font(.body)
-                            .lineSpacing(6)
-                    }
-                    .padding()
+                    Text(chapters[currentPageIndex].content)
+                        .font(.body)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
-                // Нижняя панель навигации по главам
+                // Нижняя панель навигации
                 HStack {
                     Button(action: {
-                        if currentChapterIndex > 0 { currentChapterIndex -= 1 }
+                        if currentPageIndex > 0 {
+                            currentPageIndex -= 1
+                            StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
+                        }
                     }) {
                         HStack {
                             Image(systemName: "chevron.left")
                             Text("Назад")
                         }
                     }
-                    .disabled(currentChapterIndex == 0)
+                    .disabled(currentPageIndex == 0)
                     
                     Spacer()
                     
-                    Text("Глава \(currentChapterIndex + 1) из \(chapters.count)")
-                        .font(.subheadline)
+                    // Информативная подпись
+                    Text("Страница \(currentPageIndex + 1) из \(chapters.count)")
+                        .font(.footnote)
                         .foregroundColor(.secondary)
                     
                     Spacer()
                     
                     Button(action: {
-                        if currentChapterIndex < chapters.count - 1 { currentChapterIndex += 1 }
+                        if currentPageIndex < chapters.count - 1 {
+                            currentPageIndex += 1
+                            StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
+                        } else {
+                            // Если пользователь нажал "Вперед" на самой последней странице
+                            isBookFinished = true
+                        }
                     }) {
                         HStack {
-                            Text("Вперед")
+                            Text(currentPageIndex == chapters.count - 1 ? "Завершить" : "Вперед")
                             Image(systemName: "chevron.right")
                         }
                     }
-                    .disabled(currentChapterIndex == chapters.count - 1)
                 }
                 .padding()
-                .background(Color(.systemBackground).shadow(radius: 1))
             }
         }
-        .navigationTitle(chapters.isEmpty ? bookTitle : chapters[currentChapterIndex].title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            loadEpubChapters()
-        }
-    }
-    
-    private func loadEpubChapters() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let parsed = EpubParser.shared.parseEpubFile(at: fileURL)
-            DispatchQueue.main.async {
-                self.chapters = parsed
-                self.isLoading = false
+            // Асинхронно парсим книгу
+            DispatchQueue.global(qos: .userInitiated).async {
+                let parsed = EpubParser.shared.parseEpubFile(at: fileURL)
+                DispatchQueue.main.async {
+                    self.chapters = parsed
+                    
+                    // ДОБАВЛЯЕМ ЭТУ СТРОКУ: сохраняем точное число получившихся страниц книги
+                    UserDefaults.standard.set(parsed.count, forKey: "book_total_pages_\(bookId)")
+                    
+                    let savedPage = StorageManager.shared.getProgress(bookId: bookId)
+                    if savedPage < parsed.count {
+                        self.currentPageIndex = savedPage
+                    }
+                }
             }
+        }
+        // Всплывающее окно (Pop-up) об успешном прочтении
+        .alert(isPresented: $isBookFinished) {
+            Alert(
+                title: Text("Поздравляем! 🎉"),
+                message: Text("Книга «\(bookTitle)» успешно прочтена!"),
+                dismissButton: .default(Text("Отлично"), action: {
+                    // Сбрасываем прогресс в 0 (или оставляем на последней странице по ТЗ)
+                    StorageManager.shared.saveProgress(bookId: bookId, currentPage: currentPageIndex)
+                    dismiss() // Закрываем ридер и возвращаемся в библиотеку
+                })
+            )
         }
     }
 }

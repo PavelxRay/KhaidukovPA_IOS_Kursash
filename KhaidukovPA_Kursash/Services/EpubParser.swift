@@ -1,17 +1,10 @@
-//
-//  EpubParser.swift
-//  KhaidukovPA_Kursash
-//
-//  Created by user271126 on 5/22/26.
-//
-
 import Foundation
-import EPUBKit // Импортируем нашу библиотеку
+import EPUBKit
 
 struct EpubChapter: Identifiable {
     let id = UUID()
     let title: String
-    let content: String // Храним готовый чистый текст вместо капризных файлов URL
+    let content: String
 }
 
 class EpubParser {
@@ -21,27 +14,52 @@ class EpubParser {
     func parseEpubFile(at url: URL) -> [EpubChapter] {
         var parsedChapters: [EpubChapter] = []
         
-        // Инициализируем документ библиотеки
         guard let document = EPUBDocument(url: url) else {
             print("Ошибка: Не удалось прочитать ePub структуру документа.")
             return []
         }
         
-        // 1. Запускаем рекурсивный обход оглавления по правильному свойству .subTable
+        let spineItems = document.spine.items
+        let bookTitle = document.title ?? ""
+        let parasiteLine = "\(bookTitle) | Project Gutenberg".lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Строим карту оглавления: связываем имя файла с его реальным названием из книги
+        var tocMap: [String: String] = [:]
         if let rootTocItems = document.tableOfContents.subTable {
-            extractChaptersRecursively(from: rootTocItems, document: document, result: &parsedChapters)
+            buildTocMap(from: rootTocItems, map: &tocMap)
         }
         
-        // 2. Страховочный линейный вариант (Spine), если оглавление не дало результатов
-        if parsedChapters.isEmpty {
-            var index = 1
-            for spineItem in document.spine.items {
-                if let manifestItem = document.manifest.items[spineItem.idref] {
-                    let chapterURL = document.contentDirectory.appendingPathComponent(manifestItem.path)
-                    if let rawHtml = try? String(contentsOf: chapterURL, encoding: .utf8) {
-                        let cleanText = cleanHTML(rawHtml, chapterTitle: "Глава \(index)")
-                        parsedChapters.append(EpubChapter(title: "Глава \(index)", content: cleanText))
-                        index += 1
+        var fallbackChapterIndex = 1
+        
+        for (fileIndex, spineItem) in spineItems.enumerated() {
+            // Безжалостно выкидываем первые 4 файла (Обложка, Лицензия, Содержание, Пролог)
+            if fileIndex < 4 { continue }
+            
+            if let manifestItem = document.manifest.items[spineItem.idref] {
+                let chapterURL = document.contentDirectory.appendingPathComponent(manifestItem.path)
+                if let rawHtml = try? String(contentsOf: chapterURL, encoding: .utf8) {
+                    let cleanText = cleanHTML(rawHtml, parasiteLine: parasiteLine)
+                    
+                    if !cleanText.isEmpty && cleanText.count > 200 {
+                        // Ищем настоящее название главы по имени файла
+                        let filename = URL(fileURLWithPath: manifestItem.path).lastPathComponent
+                        let matchedTitle = tocMap.first(where: { $0.key.contains(filename) })?.value
+                        
+                        // Если официального названия нет — генерируем "Глава X"
+                        let currentChapterTitle = matchedTitle ?? "Глава \(fallbackChapterIndex)"
+                        if matchedTitle == nil {
+                            fallbackChapterIndex += 1
+                        }
+                        
+                        let pages = splitIntoPages(content: cleanText, maxChars: 2500)
+                        
+                        // Формируем постраничную подпись для главы: (стр. X из Y)
+                        for (pageIndex, pageContent) in pages.enumerated() {
+                            let pageSuffix = " (стр. \(pageIndex + 1) из \(pages.count))"
+                            let finalTitle = currentChapterTitle + pageSuffix
+                            
+                            parsedChapters.append(EpubChapter(title: finalTitle, content: pageContent))
+                        }
                     }
                 }
             }
@@ -50,68 +68,107 @@ class EpubParser {
         return parsedChapters
     }
     
-    // ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ РЕКУРСИЯ под типы данных EPUBKit
-    private func extractChaptersRecursively(from items: [EPUBTableOfContents], document: EPUBDocument, result: inout [EpubChapter]) {
-        for item in items {
-            if let path = item.item {
-                let chapterURL = document.contentDirectory.appendingPathComponent(path)
-                
-                if let rawHtml = try? String(contentsOf: chapterURL, encoding: .utf8) {
-                    // Передаем заголовок главы (item.label) для очистки дубликатов из текста
-                    let cleanText = cleanHTML(rawHtml, chapterTitle: item.label)
-                    
-                    // 1. ИГНОРИРУЕМ ТЕХНИЧЕСКИЙ МУСОР: Если в тексте содержатся маркеры лицензии Гутенберга,
-                    // или текст слишком короткий/вводный — не добавляем эту главу в ридер
-                    let isTrash = cleanText.contains("Project Gutenberg") && (cleanText.contains("License") || cleanText.contains("EBook"))
-                    let isShortIntro = cleanText.count < 150 && (item.label.lowercased().contains("title") || item.label.lowercased().contains("cover"))
-                    
-                    if !cleanText.isEmpty && !isTrash && !isShortIntro && !result.contains(where: { $0.title == item.label }) {
-                        result.append(EpubChapter(title: item.label, content: cleanText))
+    // Сборщик словаря названий глав из оглавления книги
+    private func buildTocMap(from items: [EPUBTableOfContents], map: inout [String: String]) {
+            for item in items {
+                // item.label — это обычная String, извлекать через if let её не нужно
+                if let path = item.item {
+                    let cleanLabel = item.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanLabel.lowercased().contains("project gutenberg") && !cleanLabel.lowercased().contains("gutenberg") {
+                        map[path] = cleanLabel
                     }
                 }
-            }
-            
-            if let subChapters = item.subTable, !subChapters.isEmpty {
-                extractChaptersRecursively(from: subChapters, document: document, result: &result)
+                if let subChapters = item.subTable, !subChapters.isEmpty {
+                    buildTocMap(from: subChapters, map: &map)
+                }
             }
         }
+    
+    private func splitIntoPages(content: String, maxChars: Int) -> [String] {
+        let paragraphs = content.components(separatedBy: "\n\n")
+        var pages: [String] = []
+        var currentPage = ""
+        
+        for paragraph in paragraphs {
+            if (currentPage.count + paragraph.count) > maxChars && !currentPage.isEmpty {
+                pages.append(currentPage.trimmingCharacters(in: .whitespacesAndNewlines))
+                currentPage = paragraph
+            } else {
+                if currentPage.isEmpty {
+                    currentPage = paragraph
+                } else {
+                    currentPage += "\n\n" + paragraph
+                }
+            }
+        }
+        
+        if !currentPage.isEmpty {
+            pages.append(currentPage.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return pages
     }
     
-    private func cleanHTML(_ html: String, chapterTitle: String) -> String {
+    private func cleanHTML(_ html: String, parasiteLine: String) -> String {
         var clean = html.replacingOccurrences(of: "<style>[\\s\\S]*?</style>", with: "", options: .regularExpression)
         clean = clean.replacingOccurrences(of: "<script>[\\s\\S]*?</script>", with: "", options: .regularExpression)
         
-        clean = clean.replacingOccurrences(of: "</p>", with: "\n\n")
-        clean = clean.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression)
-        clean = clean.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        // 1. Маркируем реальные абзацы временным уникальным тегом, чтобы не потерять их
+        clean = clean.replacingOccurrences(of: "</p>", with: "===PARAGRAPH_BREAK===")
+        clean = clean.replacingOccurrences(of: "<br\\s*/?>", with: "===PARAGRAPH_BREAK===", options: .regularExpression)
         
+        // Удаляем все остальные HTML-теги
+        clean = clean.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         clean = clean.replacingOccurrences(of: "&nbsp;", with: " ")
         clean = clean.replacingOccurrences(of: "&amp;", with: "&")
         clean = clean.replacingOccurrences(of: "&quot;", with: "\"")
-        clean = clean.replacingOccurrences(of: "&#39;", with: "'")
+        clean = clean.replacingOccurrences(of: "'", with: "'")
         
-        var lines = clean.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        // 2. Бьем текст на куски по нашим временным маркерам абзацев
+        let rawParagraphs = clean.components(separatedBy: "===PARAGRAPH_BREAK===")
+        var finalParagraphs: [String] = []
         
-        // 2. УДАЛЯЕМ ДУБЛИКА ТЕКСТА: Если первые строчки главы дублируют её название (например, "CHAPTER I")
-        // или название книги ("Adventures of Huckleberry Finn"), мы их просто отрезаем
-        while !lines.isEmpty {
-            let firstLine = lines[0].lowercased()
-            let titleLower = chapterTitle.lowercased()
+        for rawParagraph in rawParagraphs {
+            // Убираем жесткие переносы строк внутри одного абзаца, заменяя их обычными пробелами
+            let singleLineParagraph = rawParagraph
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ") // Склеиваем разорванные строчки в одну красивую длинную строку
             
-            if firstLine == titleLower ||
-               firstLine.contains("project gutenberg") ||
-               firstLine.contains("adventures of") ||
-               titleLower.contains(firstLine) ||
-               firstLine.hasPrefix("chapter") && firstLine.count < 15 {
-                lines.removeFirst() // Удаляем дублирующую строчку сверху
-            } else {
-                break // Как только пошел реальный текст — останавливаем чистку
+            let lowerLine = singleLineParagraph.lowercased()
+            
+            // Фильтруем технический мусор Гутенберга
+            if lowerLine.contains("project gutenberg license") ||
+               lowerLine.contains("online distributed proofreading") ||
+               lowerLine.contains("produced by") ||
+               lowerLine.contains("gutenberg.org") {
+                continue
+            }
+            
+            if !parasiteLine.isEmpty && (lowerLine == parasiteLine || lowerLine.contains(parasiteLine)) {
+                continue
+            }
+            
+            if !singleLineParagraph.isEmpty {
+                finalParagraphs.append(singleLineParagraph)
             }
         }
         
-        return lines.joined(separator: "\n\n")
+        // 3. Соединяем абзацы обратно через красивый двойной отступ
+        return finalParagraphs.joined(separator: "\n\n")
     }
 
+    
+    func extractCoverImage(at url: URL) -> Data? {
+        guard let document = EPUBDocument(url: url) else { return nil }
+        if let coverURL = document.cover {
+            return try? Data(contentsOf: coverURL)
+        }
+        if let coverItem = document.manifest.items.values.first(where: {
+            $0.id.lowercased().contains("cover") || $0.mediaType.rawValue.lowercased().contains("image")
+        }), let data = try? Data(contentsOf: document.contentDirectory.appendingPathComponent(coverItem.path)) {
+            return data
+        }
+        return nil
+    }
 }

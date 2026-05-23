@@ -48,4 +48,13 @@ class StorageManager {
         try FileManager.default.moveItem(at: temporaryURL, to: localURL)
         return localURL
     }
+    
+    func saveProgress(bookId: Int, currentPage: Int) {
+           UserDefaults.standard.set(currentPage, forKey: "book_progress_\(bookId)")
+       }
+       
+       // Получаем текущую страницу (по умолчанию 0 — первая страница)
+       func getProgress(bookId: Int) -> Int {
+           return UserDefaults.standard.integer(forKey: "book_progress_\(bookId)")
+       }
 }
